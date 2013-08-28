@@ -15,14 +15,12 @@ for each file.
 ###TODO:
 
 * make commands run asynchronously
-* generalize elisp functions instead of shell command regexps
-  * more specifically regexp command is a special case.
-* allow command lookup by major-mode not just buffer file name
 * maybe a mechanism for asking about overwrites
 * A mechanism for the build step returning a "target" file that
 we select from.
 * Default fall back on emacs compiling infrastructure that already
   exists `:)`
+* Support external processes that are kept alive?
 
 Whee, look at this, it updates! In my browser! Every time I press `C-x
-C-s`!
+C-s`

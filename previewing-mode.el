@@ -3,9 +3,9 @@
 ;; Peter Meilstrup, 2013
 ;;
 ;; Intention: Update a preview in an external program every time you
-;; save the buffer. Flexible configuration for different styles of build
-;; and preview. Do builds and previews asynchronously in externals threads and
-;; report back on errors.
+;; save the buffer. Flexible configuration for different styles of
+;; build and preview. Do builds and previews asynchronously in
+;; external processes and report back on errors.
 
 (require 'cl)
 
@@ -21,52 +21,73 @@
 
    When previewing mode is enabled, any time the buffer is saved,
    asynchronous shell commands will run to process the file and
-   launch an external viewer. To configure this behavior add entries to
-   `previewing-build-command-list' and
+   launch an external viewer. To disable this change
+   `previewing-when-save'.
+
+   Variables `previewing-build-command' and
+   `previewing-view-command' control which commands are run to
+   build and view files. If not specified, matching entries are
+   sought in `previewing-build-command-list' and
    `previewing-view-command-list'."
   :lighter " Prev"
 
   (if previewing-mode
-    (add-hook 'after-save-hook 'previewing-do-preview nil 'local)
-    (remove-hook 'after-save-hook 'previewing-do-preview 'local)))
+    (add-hook 'after-save-hook 'previewing-check-and-do-preview nil 'local)
+    (remove-hook 'after-save-hook 'previewing-check-and-do-preview 'local)))
+
+(defvar previewing-when-save t
+  "Set to t if the preview commands should be run after every save.")
+
+(defun previewing-check-and-do-preview ()
+  "Run teh preview if `previewing-when-save'"
+  (when previewing-automatic-save
+    (previewing-do-preview)))
+
+;;;; Mode variables.
+
 
 (defvar previewing-build-command-list
 
-  '(("\\(.*\\).md$" "pandoc" "-f" "markdown" "\\&" "-t" "html" "-o" "\\1.html"))
+  '(((lambda (file) poly-markdown+r-mode) ;;; check minor mode for .Rmd files
+     previewing-sequence
+     ("\\(.*\\).Rmd$" ("Rscript" "-e" "library(knitr)" "\\&") "\\1.md")
+     ("\\(.*\\).md$" ("pandoc" "-f" "markdown" "\\&"
+                               "-t" "html" "-o" "\\1.html")))
+    (markdown-mode
+     "\\(.*\\).md$" ("pandoc" "-f" "markdown" "\\&"
+                     "-t" "html" "-o" "\\1.html")))
 
-  "A list of candidate commands for building a file. Each element
-   is a list whose first element is a regexp matched against the
-   buffer file name. The first matching element is used as
-   `previewing-build-command' when the latter is not set.")
+  "A list of candidate commands for building a file.
+
+   The first matching element is used as
+   `previewing-build-command' when the latter is not set. For
+   details on matching see `previewing-find-matching-command'.")
 
 (defvar previewing-view-command-list
 
-  '(("\\(.*\\).md$" "open" "-a" "Google Chrome" "\\1.html"))
+  '((".*.html$" previewing-browse-file))
 
-  "A list of candidate commands for viewing a file. Each element
-   is a list whose first element is a regexp matched against the
-   buffer file name. The first matching element is used as
-   `previewing-view-command' when the latter is not set.")
+  "A list of candidate commands for viewing a file.
+
+   The first matching element is used as
+   `previewing-view-command' when the latter is not set. For
+   details on matching see `previewing-find-matching-command'.")
 
 (defvar-local previewing-build-command nil
-  "A list (PATTERN SUBSTITUTIONS...). The pattern is
-   matched against the buffer file name, and the remaining parts
-   are evaluated as regexp replacements to form a shell
-   command and arguments. The shell command is used to launch an external
-   viewer.
+  "Specifies the command to run to build a file.
 
-   If nil, the build command is determined from
-   `previewing-build-command-list'.")
+   For details on how this is interpreted see
+   `previewing-command-doc'. If nil, the build command is
+   determined by scanning `previewing-build-command-list'.")
 
 (defvar-local previewing-view-command nil
-  "A list (PATTERN SUBSTITUTIONS...). The pattern is
-   matched against the buffer file name, and the remaining parts
-   are evaluated as regexp replacements to form a shell
-   command and arguments. The shell command is used to launch an external
-   viewer.
+  "Specifies the command to run to build a file.
 
-   If nil, the build command is determined from
-   `previewing-build-command-list'.")
+   For details on how this is interpreted see
+   `previewing-command-doc'. If nil, the view command is
+   determined by scanning `previewing-view-command-list'.")
+
+;;;; The mode command.
 
 (defun previewing-do-preview ()
   "Preview the current buffer. When `previewing-mode' is active
@@ -78,59 +99,142 @@
       ((build-command
         (or previewing-build-command
             (previewing-find-matching-command previewing-build-command-list)))
+       (file
+        (if build-command
+            (previewing-do-command (buffer-file-name) build-command)
+          (message "No build command found")
+          (buffer-file-name)))
        (view-command
         (or previewing-view-command
-            (previewing-find-matching-command previewing-view-command-list))))
-    ;; todo: do build command asynchronously and wait for callback
-    (if build-command
-        (let ((build-command-line (previewing-make-command-line build-command)))
-          (message "Build command: %s"
-                   (previewing-format-command-line build-command-line))
-          (previewing-run-command build-command-line))
-      (message "No build command found"))
-    ;; todo: do view command asynchronously and wait for callback
+            (previewing-find-matching-command previewing-view-command-list file))))
     (if view-command
-        (let ((view-command-line (previewing-make-command-line view-command)))
-          (message "View command: %s"
-                   (previewing-format-command-line view-command-line))
-          (previewing-run-command view-command-line))
+        (previewing-do-command file view-command)
       (message "No view command found"))))
 
-(defun previewing-find-matching-command (command-list)
-  "Scan the given command list for the appropriate command for
-   the present buffer and return it."
+;;;; Scanning command lists.
+
+(defun previewing-find-matching-command (command-list &optional file)
+  "Scan the given command list for a matching command.
+
+   Returns a list of a function and its extra arguments (FUN
+   &rest ARGS), or nil if no matches found.
+
+   Here is how items are matched. Items are scanned in order and
+   the first match is returned. Each item is a list; If the first
+   element is a string, it is matched as a regexp against the
+   buffer file name, and `previewing-do-substitute-command' is
+   used as the build command. If it is a symbol that looks like a
+   mode name, it is matched against the current mode. Otherwise
+   it is evaluated as an indirect function; if non-nil the
+   remaining elements are used."
   (dolist (command command-list)
-    (when (string-match (car command) (buffer-file-name))
-      (return command))))
+    (let ((head (car command))
+          (tail (cdr command))
+          (file (or file (buffer-file-name))))
+      (message "considering %S" head)
+      (cond
+       ((stringp head)                  ; String matches file name
+        (message "checking file %S : %S" file head)
+        (when (string-match head (or file (buffer-file-name)))
+          (message "Found file name match")
+          (if (and (listp (nth 2 command)) (stringp (car (nth 2 command))))
+              (return command) ; special case for substitute-command
+              (return tail))
+          (return command)))
+       ((and (symbolp head)             ; Symbol matches current major mode
+             (message "Checking if %S is mode" head)
+             (previewing-symbol-mode-p head))
+        (message "checking mode %S : %S" major-mode head)
+        (when (derived-mode-p head)
+          (return tail)))
+       ((apply (indirect-function head) (list file)) ;arbitrary function
+        (return tail))
+       (nil)))))
 
-(defun previewing-make-command-line (command-list)
-  (let ((pattern (car command-list))
-        (parts (cdr command-list))
-        (string (buffer-file-name)))
+;;;; Running commands
+
+(defconst previewing-command-doc nil
+  "A command is specified by a list where the first refers to a
+   function adn the rest are additional arguments. The function
+   is called with the file name in the head position.
+
+   If the first item is a string, the implicit command is
+   `previewing-do-substitute-command'.
+
+   Ths function may run synchronously or asynchronously. If it
+   runs synchronously it should return nil or a string which is the
+   file produced by the build. If it runs asynchronously it should
+   return a list with optional
+   keyword elements (:process PROCESS :continue CONTINUE :error ERROR ARGS).
+   The process's exit status will be used to select among continuations. If no
+   :continue is specified processing ends or proceeds from the
+   view command to the build command. Asynchronous processes use
+   (previewing-get-process-buffer) as a buffer for asychronous output.")
+
+(defun previewing-sequence (file &rest commands)
+  "Run a sequence of commands."
+  (let (result)
+    (dolist (command commands)
+      (setq result (previewing-do-command file command)))
+    result))
+
+(defun previewing-do-command (file command)
+  "Run a single command."
+  (when (stringp (car command))
+    (setq command (list 'previewing-do-substitute-command
+                        (car command) (nth 1 command))))
+  (apply (indirect-function (car command)) (cons file (cdr command))))
+
+;;;; Running substituted shell commands
+
+(defun previewing-do-substitute-command (file pattern parts &optional producing)
+  "Run a shell command by pattern substituting.
+
+   FILE is matched against PATTERN and the match substituted into
+   each element of PARTS.
+
+   The optional argument :producing is also substituted against file, and
+   becomes the output file. If not specified, I take the last substitution in
+   the command line."
+  ;; parts may optionally specify a :producing
+  (setq parts (previewing-substitute-parts file pattern parts))
+  (previewing-run-external-command parts)
+  (or producing (car (last parts))))
+
+(defun previewing-substitute-parts (file pattern parts)
+  "Match FILE against PATTERN and substitute into the PARTS.
+
+   Any element of PARTS that is not a string is passed through
+   unmodified.  The presumption is that FILE matches PATTERN. If
+   not an error is signalled."
+  (let ((string (buffer-file-name)))
     (save-match-data
-      (string-match pattern string)
-      (let* ((match (match-string 0 string)))
+      (or (string-match pattern file)
+          (signal 'error "No match for" pattern file))
+      (let* ((match (match-string 0 file)))
         (loop for part in parts collect
-              (progn (string-match pattern match)
-                     (replace-match part nil nil match)))))))
+              (cond ((stringp part)
+                     (string-match pattern match)
+                     (replace-match part nil nil match))
+                    part))))))
 
-(defun previewing-run-command (command &optional continue error)
+(defun previewing-run-external-command (parts &optional continue error)
   "Run an external program synchronously, invoking optional
    continuation and error callbacks Default behavior is to show the buffer"
-  (let (passed result)
+   (let (passed result)
     (condition-case e
         (progn
           (setq result (eval `(call-process
-                               ,(car command) nil
+                               ,(car parts) nil
                                (previewing-reset-process-buffer)
                                t
-                               ,@(cdr command))))
+                               ,@(cdr parts))))
           (if (= result 0)
               (setq passed t)
             (signal 'error
-                    (list (format "Exit status %d from command: %s"
+                    (list (format "Exit status %d from parts: %s"
                                   result
-                                  (previewing-format-command-line command))))))
+                                  (previewing-format-parts-line parts))))))
       (error
        (apply (indirect-function (or error 'previewing-report-error))
               (list e))))
@@ -152,6 +256,8 @@
   (setq previewing-continue continue)
   (setq previewing-error error)
   (set-process-sentinel previewing-process 'previewing-sentinel))
+
+;;;; Async stuff
 
 (defun previewing-get-process-buffer ()
   "Ensure process buffer exists and return it."
@@ -184,7 +290,7 @@
   "Format a command line for display in messages."
   (mapconcat 'shell-quote-argument command " "))
 
-;; we just have one async process per buffer, tracked in buffer-local variables
+;;; we just have one async process per buffer, tracked in buffer-local variables
 (defvar-local previewing-process nil
   "The process that previewing-mode is currently waiting on")
 (defvar-local previewing-continue nil
@@ -196,6 +302,29 @@
   "The buffer that receives input from the previewing process.")
 (defvar-local previewing-home-buffer nil
   "A handle back to the home buffer of the previewing process buffer...")
+
+;;;; Build/view functions
+
+(defun previewing-browse-file (file)
+  "Open a file in the browser"
+  (message "Browsing %s" file)
+  (browse-url (browse-url-file-url file)))
+
+;;;; Other supporting functions
+
+(defun previewing-symbol-mode-p (sym)
+  "Return non-nil if a symbol refers to a mode.
+
+   A symbol 'SYM is considered to refer to a mode if it is bound to
+   a function, AND and ends in '-mode' OR the corresponding SYM-hook 
+    exists."
+  (let*
+      ((name (symbol-name sym))
+       (ends-in-mode (save-match-data (string-match "-mode$" name)))
+       (hook-symbol (intern-soft (concat name "-hook")))
+       (has-hook (and hook-symbol (boundp hook-symbol))))
+    (and (fboundp sym)
+         (or has-hook ends-in-mode))))
 
 ;;;###autoload
 (add-hook 'markdown-mode-hook 'previewing-mode)
