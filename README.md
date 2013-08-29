@@ -16,8 +16,6 @@ for each file.
 
 * make commands run asynchronously
 * maybe a mechanism for asking about overwrites
-* A mechanism for the build step returning a "target" file that
-we select from.
 * Default fall back on emacs compiling infrastructure that already
   exists `:)`
 * Support external processes that are kept alive?

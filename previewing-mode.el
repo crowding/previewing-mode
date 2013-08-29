@@ -38,21 +38,27 @@
 (defvar previewing-when-save t
   "Set to t if the preview commands should be run after every save.")
 
+(defvar previewing-trace t
+  "Verbosely give trace messages about what previewing mode is up to.")
+
 (defun previewing-check-and-do-preview ()
-  "Run teh preview if `previewing-when-save'"
-  (when previewing-automatic-save
-    (previewing-do-preview)))
+  "Run the preview if `previewing-when-save'"
+  (when previewing-when-save (previewing-do-preview)))
 
 ;;;; Mode variables.
 
 
 (defvar previewing-build-command-list
 
-  '(((lambda (file) poly-markdown+r-mode) ;;; check minor mode for .Rmd files
-     previewing-sequence
-     ("\\(.*\\).Rmd$" ("Rscript" "-e" "library(knitr)" "\\&") "\\1.md")
-     ("\\(.*\\).md$" ("pandoc" "-f" "markdown" "\\&"
-                               "-t" "html" "-o" "\\1.html")))
+  `((,(lambda (file) poly-markdown+r-mode) previewing-sequence
+     ("\\(.*\\)\\.Rmd$"
+      ("Rscript" "-e"
+       ,(concat "library(knitr);"
+                "knit(commandArgs(trailingOnly=TRUE)[[1]],"
+                " output=commandArgs(trailingOnly=TRUE)[[2]])")
+       "\\&" "\\1.md"))
+     ("\\(.*\\).md$"
+      ("pandoc" "-f" "markdown" "\\&" "-t" "html" "-o" "\\1.html")))
     (markdown-mode
      "\\(.*\\).md$" ("pandoc" "-f" "markdown" "\\&"
                      "-t" "html" "-o" "\\1.html")))
@@ -94,7 +100,7 @@
    this is called from `after-save-hook'."
   (interactive)
   (save-some-buffers (list (current-buffer)))
-  (message "Previewing %s" (buffer-file-name))
+  (previewing-trace "Previewing %S" (buffer-file-name))
   (let*
       ((build-command
         (or previewing-build-command
@@ -127,27 +133,30 @@
    mode name, it is matched against the current mode. Otherwise
    it is evaluated as an indirect function; if non-nil the
    remaining elements are used."
+  (setq file (or file (buffer-file-name)))
+  (previewing-trace "Looking for matching conversion for %S" file)
   (dolist (command command-list)
     (let ((head (car command))
-          (tail (cdr command))
-          (file (or file (buffer-file-name))))
-      (message "considering %S" head)
+          (tail (cdr command)))
+      (previewing-trace "considering %S" head)
       (cond
        ((stringp head)                  ; String matches file name
-        (message "checking file %S : %S" file head)
+        (previewing-trace "checking file %S : %S" file head)
         (when (string-match head (or file (buffer-file-name)))
-          (message "Found file name match")
+          (previewing-trace "Found file name match")
           (if (and (listp (nth 2 command)) (stringp (car (nth 2 command))))
               (return command) ; special case for substitute-command
               (return tail))
           (return command)))
        ((and (symbolp head)             ; Symbol matches current major mode
-             (message "Checking if %S is mode" head)
+             (previewing-trace "Checking if %S is mode" head)
              (previewing-symbol-mode-p head))
-        (message "checking mode %S : %S" major-mode head)
+        (previewing-trace "checking mode %S : %S" major-mode head)
         (when (derived-mode-p head)
+          (previewing-trace "Found mode match")
           (return tail)))
        ((apply (indirect-function head) (list file)) ;arbitrary function
+        (previewing-trace "Found function match")
         (return tail))
        (nil)))))
 
@@ -173,9 +182,10 @@
 
 (defun previewing-sequence (file &rest commands)
   "Run a sequence of commands."
-  (let (result)
+  (let ((result file))
     (dolist (command commands)
-      (setq result (previewing-do-command file command)))
+      (previewing-trace "Sequence doing command %S" command)
+      (setq result (previewing-do-command result command)))
     result))
 
 (defun previewing-do-command (file command)
@@ -183,11 +193,12 @@
   (when (stringp (car command))
     (setq command (list 'previewing-do-substitute-command
                         (car command) (nth 1 command))))
+  (previewing-trace "Doing command %S" command)
   (apply (indirect-function (car command)) (cons file (cdr command))))
 
 ;;;; Running substituted shell commands
-
-(defun previewing-do-substitute-command (file pattern parts &optional producing)
+(defun previewing-do-substitute-command
+  (file pattern parts &optional producing)
   "Run a shell command by pattern substituting.
 
    FILE is matched against PATTERN and the match substituted into
@@ -221,7 +232,8 @@
 (defun previewing-run-external-command (parts &optional continue error)
   "Run an external program synchronously, invoking optional
    continuation and error callbacks Default behavior is to show the buffer"
-   (let (passed result)
+  (let (passed result)
+    (previewing-trace "Starting program: %s" (previewing-format-command-line parts))
     (condition-case e
         (progn
           (setq result (eval `(call-process
@@ -248,7 +260,7 @@
 
 (defun previewing-run-command-async (command &optional continue error)
   (when previewing-process
-      (message "Aborting process")
+      (previewing-trace "Aborting process")
       (previewing-stop-process))
   (setq previewing-process
         (eval `(start-process
@@ -332,5 +344,9 @@
 (add-hook 'html-mode-hook 'previewing-mode)
 ;;;###autoload
 (add-hook 'latex-mode-hook 'previewing-mode)
+
+(defun previewing-trace (format &rest args)
+  (when previewing-trace
+    (apply 'message (cons (concat "Previewing: " format) args))))
 
 (provide 'previewing-mode)

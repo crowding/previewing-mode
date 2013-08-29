@@ -1,0 +1,40 @@
+### Using previewing-mode with knitr
+
+We can also process multi-step operations. An `.Rmd` file is processed
+first into a Markdown file and then into an HTML file. I am using
+poly-mode for editing Rmd files, so to generate a preview I first need
+to knit the document, then convert the `.md` file into HTML. You could
+set up this build by adding something like this to your `.emacs.d`:
+
+``` emacs-lisp
+
+(add-to-list
+ 'previewing-build-command-list
+ ("\\(.*\\)\\.Rmd$"
+  previewing-sequence
+  ("\\(.*\\)\\.Rmd$"
+   ("Rscript" "-e"
+    ,(concat "library(knitr);"
+             "knit(commandArgs(trailingOnly=TRUE)[[1]],"
+             " output=commandArgs(trailingOnly=TRUE)[[2]])")
+    "\\&" "\\1.md"))
+  ("\\(.*\\).md$"
+   ("pandoc" "-f" "markdown" "\\&" "-t" "html" "-o" "\\1.html"))))
+ 
+```
+
+Note I'm using `previewing-sequence` to run two commands: the first
+converts an .Rmd file to md using knitr, then the next converts an
+`.md` file to HTML using pandoc. The command lines are constructed by
+regexp substitutions.
+
+```{r testing}
+
+x <- rnorm(100)
+y <- rnorm(100)
+print(mean(x))
+print(mean(y))
+plot(x, y)
+
+```
+
