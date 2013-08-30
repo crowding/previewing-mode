@@ -486,4 +486,4 @@
             (and (booleanp previewing-trace) previewing-trace))
     (apply 'message (cons (concat "Previewing: " format) args))))
 
-(provide 'previewing-mode)
+(provide 'previewing)

@@ -1,0 +1,28 @@
+### Using previewing-mode with knitr
+
+We can also process multi-step operations. An `.Rmd` file is processed
+first into a Markdown file and then into an HTML file, but the
+`knit2html` function in the `knitr` does both steps. This is easily
+configured like so: You could set up this build by adding something
+like this to your `.emacs.d`:
+
+```
+
+(add-to-list
+ 'previewing-build-command-list
+ `("\\(.*\\)\\.[Rr]md$"
+   ("R" "-e"
+    "library(knitr); knit2html(commandArgs(trailingOnly=TRUE)[[1]])"
+    "\\&") "\\1.html"))
+
+```
+
+
+
+```{r testing}
+
+x <- rnorm(100)
+y <- rnorm(100)
+plot(x, y, type="l")
+
+```
