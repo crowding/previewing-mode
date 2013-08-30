@@ -10,7 +10,7 @@ set up this build by adding something like this to your `.emacs.d`:
 
 (add-to-list
  'previewing-build-command-list
- ("\\(.*\\)\\.Rmd$"
+ `("\\(.*\\)\\.Rmd$"
   previewing-sequence
   ("\\(.*\\)\\.Rmd$"
    ("Rscript" "-e"
@@ -23,10 +23,10 @@ set up this build by adding something like this to your `.emacs.d`:
  
 ```
 
-Note I'm using `previewing-sequence` to run two commands: the first
-converts an .Rmd file to md using knitr, then the next converts an
-`.md` file to HTML using pandoc. The command lines are constructed by
-regexp substitutions.
+Note tha I'm using `previewing-sequence` to run two commands: the
+first converts an .Rmd file to md using knitr, then the next converts
+an `.md` file to HTML using pandoc. The command lines are constructed
+by regexp substitutions.
 
 ```{r testing}
 
@@ -34,7 +34,6 @@ x <- rnorm(100)
 y <- rnorm(100)
 print(mean(x))
 print(mean(y))
-plot(x, y)
+plot(x, y, type="l")
 
 ```
-

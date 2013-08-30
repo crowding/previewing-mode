@@ -14,11 +14,12 @@ for each file.
 
 ###TODO:
 
-* make commands run asynchronously
 * maybe a mechanism for asking about overwrites
 * Default fall back on emacs compiling infrastructure that already
   exists `:)`
 * Support external processes that are kept alive?
 
 Whee, look at this, it updates! In my browser! Every time I press `C-x
-C-s`
+C-s`! And it even does it asynchronously!
+
+Async with multiple steps... works!

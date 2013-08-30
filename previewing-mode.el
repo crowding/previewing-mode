@@ -40,9 +40,8 @@
 (defvar previewing-when-save t
   "Set to t if the preview commands should be run after every save.")
 
-(defvar previewing-trace t
-  "Verbosely give trace messages about what previewing mode is up to.")
-
+(defvar previewing-trace 1
+  "Level of verbosity of trace messages given by Previewing mode.")
 
 (defvar previewing-build-command-list
 
@@ -101,22 +100,41 @@
    `after-save-hook'."
   (interactive)
   (save-some-buffers (list (current-buffer)))
+  (previewing-stop-process)
+  (previewing-reset-process-buffer)
   (previewing-trace "Previewing %S" (buffer-file-name))
-  (let*
-      ((build-command
-        (or previewing-build-command
-            (previewing-find-matching-command previewing-build-command-list)))
-       (file
-        (if build-command
-            (previewing-do-command (buffer-file-name) build-command)
-          (message "No build command found")
-          (buffer-file-name)))
-       (view-command
-        (or previewing-view-command
-            (previewing-find-matching-command previewing-view-command-list file))))
-    (if view-command
-        (previewing-do-command file view-command)
-      (message "No view command found"))))
+  ;;continue with build, then continue with view
+  (previewing-yield nil nil 'previewing-report-error)
+  (previewing-yield nil 'previewing-do-view)
+  (previewing-yield nil 'previewing-do-build)
+  (previewing-maybe-continue (buffer-file-name)))
+
+(defun previewing-do-build (file data)
+  (let ((build-command
+         (or previewing-build-command
+             (previewing-find-matching-command
+              previewing-build-command-list file))))
+    (cond
+     (build-command
+      (previewing-trace "Found build command %S" build-command)
+      (previewing-maybe-continue
+       (previewing-do-command file build-command)))
+     (t
+      (previewing-trace "No build command found")
+      (previewing-maybe-continue file)))))
+
+(defun previewing-do-view (file data)
+  (let ((view-command
+         (or previewing-view-command
+             (previewing-find-matching-command
+              previewing-view-command-list file))))
+    (cond
+     (view-command
+      (previewing-trace "Found view command: %S" view-command)
+      (previewing-maybe-continue
+       (previewing-do-command file view-command)))
+     (t (previewing-trace "No view command found")
+        (previewing-maybe-continue file)))))
 
 ;;;; Scanning command lists.
 
@@ -180,25 +198,34 @@
    view command to the build command. Asynchronous processes use
    (previewing-get-process-buffer) as a buffer for asychronous output.")
 
-(defun previewing-sequence (file &rest commands)
+(defun previewing-sequence (file commands)
   "Run a sequence of commands."
-  (let ((result file))
-    (dolist (command commands)
-      (previewing-trace "Sequence doing command %S" command)
-      (setq result (previewing-do-command-base result command)))
-    result))
+  (previewing-sequence-step file commands))
 
-(defun previewing-do-command-base (file command)
-  "Run a single command; don't process the async things."
+(cl-defun previewing-sequence-step (file (&optional command &rest rest))
+  (previewing-trace "Doing step %S on file %S" command file)
+  (cond (command
+         (previewing-yield rest 'previewing-sequence-step)
+         ;; how does the previewing step get information to the next step?
+         (previewing-maybe-continue (previewing-do-command file command)))
+        (t (previewing-maybe-continue file))))
+
+;; if you are async and want to return data to the next, put data on the stack?
+
+(defun previewing-do-command (file command)
+  "Run a single command"
   (when (stringp (car command))
     (setq command (list 'previewing-do-substitute-command
                         (car command) (nth 1 command))))
-  (previewing-trace "Doing command %S" command)
-  (apply (indirect-function (car command)) (cons file (cdr command))))
+  (previewing-trace "Doing command %S on file %S" command file)
+  (previewing-maybe-continue
+   (apply (indirect-function (car command)) (list file (cdr command)))))
 
 ;;;; Running substituted shell commands
-(defun previewing-do-substitute-command
-  (file pattern parts &optional producing)
+(cl-defun previewing-do-substitute-command
+  (file (pattern
+         parts
+         &optional (producing (car (last parts)))))
   "Run a shell command by pattern substituting.
 
    FILE is matched against PATTERN and the match substituted into
@@ -207,10 +234,10 @@
    The optional argument :producing is also substituted against file, and
    becomes the output file. If not specified, I take the last substitution in
    the command line."
-  ;; parts may optionally specify a :producing
   (setq parts (previewing-substitute-parts file pattern parts))
-  (previewing-run-external-command parts)
-  (or producing (car (last parts))))
+  (setq previewing-return
+        (car (previewing-substitute-parts file pattern (list producing))))
+  (previewing-maybe-continue (previewing-launch-command parts)))
 
 (defun previewing-substitute-parts (file pattern parts)
   "Match FILE against PATTERN and substitute into the PARTS.
@@ -229,36 +256,22 @@
                      (replace-match part nil nil match))
                     part))))))
 
-(defun previewing-run-external-command (parts)
-  "Run a command synchronously, by launching it async and waiting"
-  (let ((done nil)
-        (process (previewing-launch-command parts))
-        (cont (lambda (process data)
-                (message "Completed %S" data) (setq done 'continue)))
-        (err (lambda (process data)
-               (message "did not complete %S" data) (setq done 'error))))
-    (previewing-yield process cont err "foo")
-    (while (not done) (sit-for 0.2))
-    (case done
-      (continue t)
-      (error (previewing-report-error (list 'error "external command failed"))))))
+;;;; Async stuff
 
 (defun previewing-launch-command (parts)
-  "Start a command asynchronously returning a process."
-  (when previewing-process
-    (previewing-trace "Aborting process")
-    (previewing-stop-process))
+  "Start a command asynchronously; return a process."
   (previewing-trace "Starting program: %s"
                       (previewing-format-command-line parts))
   (apply 'start-process
          `("previewing" ,(previewing-get-process-buffer) ,@parts)))
 
-(defun previewing-report-error (e)
+(defun previewing-report-error (e &optional data)
   "Default error handler; show the preview output buffer and rethrow the error."
   (switch-to-buffer-other-window (previewing-get-process-buffer))
-  (apply 'signal `(,(car e) ,(cdr e))))
-
-;;;; Async stuff
+  (with-current-buffer (previewing-get-process-buffer)
+    (goto-char (point-max))
+    (insert (format "\n%S\n" e)))
+  (signal (car e) (cdr e)))
 
 (defun previewing-get-process-buffer ()
   "Ensure process buffer exists and return it."
@@ -276,21 +289,45 @@
 (defun previewing-reset-process-buffer ()
   "Erase the process buffer and return it."
   (let ((buf (previewing-get-process-buffer)))
+    (previewing-trace "Erasing buffer %S" buf)
     (with-current-buffer buf (erase-buffer))
     buf))
 
-(defun previewing-yield (process &optional continue error data)
-  "Activate a sentinel on given process; store continuation and return.
-   Nothing above this function should mess with the stack."
-  (previewing-trace "yield: process: %S, continue: %S, error: %S, data: %S"
-                    process continue error data)
-  (setq previewing-process process)
-  (let ((buf (current-buffer)))     ;leave pointer back to this buffer
-        (with-current-buffer (process-buffer process))
-        (setq previewing-home-buffer buf))
+(defun previewing-maybe-continue (result)
+  "Take a result. If it's a process, assume you've put any
+   desired data into previewing-return and wait on the
+   process. Otherwise go to the next continuation."
+  (cond
+   ((processp result)
+    (previewing-trace "Maybe-continue: waiting on %S" result)
+    (previewing-set-sentinel result)
+    result)
+   (t
+    (previewing-trace "Maybe-continue: continuing with %S" result)
+    (setq previewing-return result)
+    (previewing-continue result))))
+
+(defun previewing-yield (data &optional continue error)
+  "Store continuation and return.
+   Nothing above this function should mess with the stack.  Not
+   really a 'yield,' more of a push your return address onto the
+   stack. To return your value you may set previewing-return.
+   the next continuation."
+  (previewing-trace "yield: data: %S, continue: %S, error: %S"
+                    data continue error)
   (push data previewing-data)
   (push continue previewing-continue)
-  (push error previewing-error)
+  (push error previewing-error))
+
+(defun previewing-set-sentinel (process)
+  (previewing-trace "Setting sentinel on %S, process buffer is %S"
+                    process (process-buffer process))
+  (unless (process-buffer process)
+    (set-process-buffer process (previewing-get-process-buffer)))
+  (let ((buf (current-buffer)))     ;leave pointer back to this buffer
+    (with-current-buffer (process-buffer process)
+      (setq previewing-home-buffer buf)))
+  (setq previewing-process process)
   (set-process-sentinel process 'previewing-sentinel))
 
 (defun previewing-stop-process ()
@@ -313,83 +350,98 @@
   "Invokes the next continuation."
   (previewing-trace "Got process change %S %S" process change)
   (previewing-trace "Current buffer is %S" (current-buffer))
-  (cond
-   ((eq process previewing-process)                            ;navigate back to the home buffer
-    (with-current-buffer (process-buffer process)
-      (with-current-buffer previewing-home-buffer
+  (unless (process-buffer process)
+    (signal 'error "Got notice on process with no buffer"))
+  (with-current-buffer (process-buffer process)
+    (with-current-buffer previewing-home-buffer
+      (cond
+       ((eq process previewing-process)  ;navigate back to the home buffer
         (previewing-trace "Got back to buffer %S" (current-buffer))
         (cond
          ((save-match-data (string-match "^finished" change))
           (previewing-trace "Looks like process exited normally")
-          (previewing-continue process))
+          (let ((retval (or previewing-return process)))
+            (setq previewing-return nil)
+            (previewing-continue retval)))
          ((process-live-p process)
           (previewing-trace "Process still alive? (change %S, status %s)"
                             change (process-status process)))
          (t
           (previewing-trace "Process died (change %S, status %s)"
                             change (process-status process))
-          (previewing-error process))))))
-   (t
-    (previewing-trace
-     "Got signal for non-pending process? %S %S" process change)
-    nil)))
+          (previewing-error (list 'error 'previewing-process-died process change))))
+        )
+       (t
+        (previewing-trace
+         "Got signal for non-pending process? %S %S, was waiting for %S"
+         process change previewing-process)
+        nil)))))
 
-(defun previewing-continue (process)    ;handler called by sentinel
+(defun previewing-continue (retval)    ;handler called by sentinel
   "Pop off the continuation and go"
+  (previewing-trace "Continuing with return %S" retval)
   (catch 'return
     (while previewing-continue
       (let ((cont (pop previewing-continue))
             (err (pop previewing-error))
             (data (pop previewing-data)))
+        (previewing-trace "pop for continue")
         (when cont
-          (throw 'return (previewing-continue-on process cont data)))))))
+          (throw 'return (previewing-continue-on retval cont data)))))
+    (previewing-trace "Found no continuation")
+    retval))
 
-(defun previewing-error (process)       ;handler called by sentinel
+(defun previewing-error (errinfo) ;handler called by sentinel
   "Pop off the error continuation and go"
+  (previewing-trace "Continuing with error %S" errinfo)
   (catch 'return
     (while previewing-error
+      (previewing-trace "pop for error")
       (let ((cont (pop previewing-continue))
             (err (pop previewing-error))
             (data (pop previewing-data)))
-        (when err (throw 'return (previewing-continue-on process err data)))))
-    (signal 'error process)))
+        (when err (throw 'return (previewing-continue-on errinfo err data)))))
+    ;if we're out of continuations, control throws the error back to emacs.
+    (signal (car errinfo) (cdr errinfo))))
 
-(defun previewing-continue-on (process cont data) ;handler called by both
+(defun previewing-continue-on (retval cont data) ;handler called by both
   "Call the next function; if it returns a process +
-   continuation, set pointer back and tohis buffer, add sentinel
+   continuation, set pointer back to this buffer, add sentinel
    and put it on the stack; if it returns immediately"
-  (previewing-trace "Continuing on %S %S %S" process cont data)
+  (previewing-trace "Continuing with return %S; call %S; data %S"
+                    retval cont data)
   (let ((results
          (condition-case e
-             (apply (indirect-function cont) (list process data))
+             (apply (indirect-function cont) (list retval data))
            (error (previewing-error e)))))
-    (cond
-     ((listp process)
-      (destructuring-bind (process continue error data) results
-        (previewing-yield process continue error data)))
-     (t (previewing-continue results)))))
+   (previewing-maybe-continue results)))
 
 ;;; we just have one async process per buffer, tracked in buffer-local variables
-(defvar-local previewing-process nil
-  "The process that previewing-mode is currently waiting on")
+(defvar-local previewing-data nil
+  "Data that will be passed to identify the next continuation")
 (defvar-local previewing-continue nil
   "A stack of functions that will be executed once the process
   completes successfully.")
 (defvar-local previewing-error nil
   "A stack of functions that will be executed if the
    previewing process ends with nonzero exit code.")
-(defvar-local previewing-result nil
-  "Data that will be passed to identify the next continuation")
+
+(defvar-local previewing-process nil
+  "The process that previewing-mode is currently waiting on")
+(defvar-local previewing-return nil
+  "Set this value to return some thing from an async function")
+
 (defvar-local previewing-process-buffer nil
   "The buffer that receives input from the previewing process.")
 (defvar-local previewing-home-buffer nil
-  "A handle back to the home buffer of the previewing process buffer...")
+  "A handle back to the home buffer from the process buffer.")
 
 ;;;; Build/view functions
 
-(defun previewing-browse-file (file)
+(defun previewing-browse-file (file data)
   "Open a file in the browser"
   (message "Browsing %s" file)
+  ;this returns a process, too
   (browse-url (browse-url-file-url file)))
 
 ;;;; Other supporting functions
@@ -420,7 +472,8 @@
 (add-hook 'latex-mode-hook 'previewing-mode)
 
 (defun previewing-trace (format &rest args)
-  (when previewing-trace
+  (when (or (and (numberp previewing-trace) (> previewing-trace 0))
+            previewing-trace)
     (apply 'message (cons (concat "Previewing: " format) args))))
 
 (provide 'previewing-mode)
