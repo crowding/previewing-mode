@@ -17,9 +17,5 @@ for each file.
 * maybe a mechanism for asking about overwrites
 * Default fall back on emacs compiling infrastructure that already
   exists `:)`
-* Support external processes that are kept alive?
-
-Whee, look at this, it updates! In my browser! Every time I press `C-x
-C-s`! And it even does it asynchronously!
-
-Async with multiple steps... works!
+* Support external processes that are kept alive in inverior process
+  buffers?

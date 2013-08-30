@@ -32,8 +32,6 @@ by regexp substitutions.
 
 x <- rnorm(100)
 y <- rnorm(100)
-print(mean(x))
-print(mean(y))
 plot(x, y, type="l")
 
 ```
