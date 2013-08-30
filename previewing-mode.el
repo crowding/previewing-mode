@@ -220,8 +220,8 @@
 (defun previewing-do-command (file command)
   "Run a single command"
   (when (stringp (car command))
-    (setq command (list 'previewing-do-substitute-command
-                        (car command) (nth 1 command))))
+    (setq command
+          `(previewing-do-substitute-command ,@command)))
   (previewing-trace 4 "Doing command %S on file %S" command file)
   (previewing-maybe-continue
    (apply (indirect-function (car command)) (list file (cdr command)))))
