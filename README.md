@@ -11,7 +11,7 @@ Use it for Markdown, HTML, LaTeX, sweave, knitr, pic and other markup
 files and literate programming modes (configuration details
 forthcoming.)
 
-Use it to automatically run your unit tests.
+Use it to [automatically run your unit tests.](examples/r-unit-testing.el)
 
 Supplants the built-in `M-x compile` functionality by sequencing
 multiple commands (e.g. process the file and then open the result in

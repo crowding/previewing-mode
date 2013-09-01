@@ -70,7 +70,8 @@
 
 (defvar previewing-view-command-list
 
-  '((".*.html$" previewing-browse-file))
+  `((".*.html$" previewing-browse-file)
+    (,(lambda () t) previewing-show-compilation-buffer))
 
   "A list of candidate commands for viewing a file.
 
@@ -215,8 +216,6 @@
          (previewing-maybe-continue (previewing-do-command file command)))
         (t (previewing-maybe-continue file))))
 
-;; if you are async and want to return data to the next, put data on the stack?
-
 (defun previewing-do-command (file command)
   "Run a single command"
   (when (stringp (car command))
@@ -227,6 +226,7 @@
    (apply (indirect-function (car command)) (list file (cdr command)))))
 
 ;;;; Running substituted shell commands
+
 (cl-defun previewing-do-substitute-command
   (file (pattern
          parts
@@ -261,24 +261,46 @@
                      (replace-match part nil nil match))
                     part))))))
 
-;;;; Async stuff
-
 (defun previewing-launch-command (parts)
   "Start a command asynchronously; return a process."
   (previewing-trace 1 "Starting command: %s"
-                      (previewing-format-command-line parts))
-  (apply 'start-process
-         `(,(previewing-format-command-line parts)
-           ,(previewing-get-process-buffer)
-            ,@parts)))
+                    (previewing-format-command-line parts))
+  (let ((buf (previewing-get-process-buffer)))
+    (with-current-buffer buf
+      (previewing-go-to-bottom)
+      (let ((inhibit-read-only t))
+        (insert (previewing-format-command-line parts)))
+      (apply 'start-process
+             `(,(previewing-format-command-line parts)
+               ,buf
+               ,@parts)))))
 
-(defun previewing-report-error (e &optional data)
-  "Default error handler; show the preview output buffer and rethrow the error."
-  (switch-to-buffer-other-window (previewing-get-process-buffer))
+;;;; The compilation buffer and window management
+
+(defun previewing-set-error-patterns (input patterns)
+  "Buffer-locally add things to compilation-error-rexexp-alist"
   (with-current-buffer (previewing-get-process-buffer)
-    (goto-char (point-max))
-    (insert (format "\n%S\n" e)))
-  (signal (car e) (cdr e)))
+    (dolist (pat patterns)
+      (make-variable-buffer-local 'compilation-error-rexexp-alist)
+      (add-to-list 'compilation-error-rexexp-alist pat)))
+  input)
+
+(defun previewing-go-to-bottom ()
+  (goto-char (point-max))
+  (dolist (win (get-buffer-window-list (current-buffer)))
+    (set-window-point win (point-max))))
+
+(defun previewing-show-compilation-buffer (&optional input data)
+  (cond
+   ((processp input)
+    (previewing-show-buffer-other-window
+     (or (process-buffer input) (previewing-get-process-buffer))))
+   (t (previewing-show-buffer-other-window (previewing-get-process-buffer))))
+  input)
+
+(defun previewing-show-buffer-other-window (buf)
+  (unless (equal buf (window-buffer (frame-selected-window)))
+    (display-buffer buf '(display-buffer-reuse-window))))
 
 (defun previewing-get-process-buffer ()
   "Ensure process buffer exists and return it."
@@ -289,16 +311,22 @@
         (setq previewing-process-buffer
               (generate-new-buffer
                (concat "*Previewing-[" (buffer-name) "]*")))
-        (eval `(with-current-buffer previewing-process-buffer
-                 (setq previewing-home-buffer ',(current-buffer))))
+        (let ((bbbuf (current-buffer)))
+          (with-current-buffer previewing-process-buffer
+            (setq previewing-home-buffer bbbuf)
+            (compilation-mode)))
         previewing-process-buffer)))
 
 (defun previewing-reset-process-buffer ()
   "Erase the process buffer and return it."
   (let ((buf (previewing-get-process-buffer)))
     (previewing-trace 4 "Erasing buffer %S" buf)
-    (with-current-buffer buf (erase-buffer))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)))
     buf))
+
+;;;; Async stuff
 
 (defun previewing-maybe-continue (result)
   "Take a result. If it's a process, assume you've put any
@@ -454,7 +482,31 @@
   ;this returns a process, too
   (browse-url (browse-url-file-url file)))
 
+
+(defun previewing-report-error (e &optional data)
+  "Default error handler; show the preview output buffer and rethrow the error."
+  (previewing-trace 4 "Showing buffer %S" (previewing-get-process-buffer))
+  (let ((win (previewing-show-buffer-other-window (previewing-get-process-buffer))))
+    (with-current-buffer (previewing-get-process-buffer)
+      (previewing-trace 4 "%S" (point))
+      (let ((inhibit-read-only t))
+        (goto-char (point-max))
+        (insert "\nError: " (error-message-string e) "\n")
+        (compilation-parse-errors (point-min) (point-max)))
+      (with-selected-window win
+        (goto-char (point-min))
+        (with-demoted-errors
+          (compilation-next-error 1))))) ; not sure why this is necessary
+  (signal (car e) (cdr e)))
+
 ;;;; Other supporting functions
+
+(defun previewing-build-path (first &optional next &rest rest)
+  (if next
+      (apply 'previewing-path-build
+             (cons (concat (file-name-as-directory first) next) rest))
+    first))
+
 
 (defun previewing-symbol-mode-p (sym)
   "Return non-nil if a symbol refers to a mode.
@@ -470,9 +522,12 @@
     (and (fboundp sym)
          (or has-hook ends-in-mode))))
 
-(defun previewing-format-command-line (command)
+(defun previewing-format-command-line (parts)
   "Format a command line for display in messages."
-  (mapconcat 'shell-quote-argument command " "))
+  (mapconcat (lambda (part)
+               (let ((tsh (tramp-shell-quote-argument part)))
+                 (if (equal tsh part) part (format "%S" part))))
+             parts " "))
 
 ;;;###autoload
 (add-hook 'markdown-mode-hook 'previewing-mode)
