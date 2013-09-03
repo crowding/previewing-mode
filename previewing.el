@@ -32,10 +32,15 @@
   :lighter " Prev"
 
   (if previewing-mode
-    (add-hook 'after-save-hook 'previewing-check-and-do-preview nil 'local)
-    (remove-hook 'after-save-hook 'previewing-check-and-do-preview 'local)))
+      (add-hook 'after-save-hook
+                'previewing-check-and-do-preview nil 'local)
+    (remove-hook 'after-save-hook
+                 'previewing-check-and-do-preview 'local)))
 
 ;;;; Mode variables.
+
+(defvar previewing-always-show-buffer nil
+  "If non-nil, always shows previewing buffer when you start a job.")
 
 (defvar previewing-when-save t
   "Set to t if the preview commands should be run after every save.")
@@ -49,13 +54,11 @@
 
 (defvar previewing-build-command-list
 
-  `((,(lambda (file) poly-markdown+r-mode) previewing-sequence
-     ("\\(.*\\)\\.Rmd$"
+  `((,(lambda (file) poly-markdown+r-mode)
+     ("\\(.*\\)\\.[Rr]md$"
       ("Rscript" "-e"
-       ,(concat "library(knitr);"
-                "knit(commandArgs(trailingOnly=TRUE)[[1]],"
-                " output=commandArgs(trailingOnly=TRUE)[[2]])")
-       "\\&" "\\1.md"))
+       "library(knitr); knit2html(commandArgs(trailingOnly=TRUE)[[1]])"
+       "\\&") "\\1.html")
      ("\\(.*\\).md$"
       ("pandoc" "-f" "markdown" "\\&" "-t" "html" "-o" "\\1.html")))
     (markdown-mode
@@ -107,6 +110,8 @@
   (save-some-buffers (list (current-buffer)))
   (previewing-stop-process)
   (previewing-reset-process-buffer)
+  (when previewing-always-show-buffer
+    (previewing-show-compilation-buffer))
   (previewing-trace 1 "Previewing %S" (buffer-file-name))
   ;;continue with build, then continue with view
   (previewing-yield nil nil 'previewing-report-error)
@@ -319,11 +324,13 @@
 
 (defun previewing-reset-process-buffer ()
   "Erase the process buffer and return it."
-  (let ((buf (previewing-get-process-buffer)))
+  (let ((buf (previewing-get-process-buffer))
+        (dir default-directory))
     (previewing-trace 4 "Erasing buffer %S" buf)
     (with-current-buffer buf
       (let ((inhibit-read-only t))
-        (erase-buffer)))
+        (erase-buffer)
+        (setq default-directory dir)))
     buf))
 
 ;;;; Async stuff
@@ -369,6 +376,7 @@
   "Stop the currently running process, if any; actually terminate with
    prejudice deleting any continuations left to run.
    TODO: maybe call the error continuation?"
+  (interactive)
   (when previewing-process
     (previewing-trace 1 "Killing previous build")
     (previewing-trace 4 "Stopping process %S" previewing-process)
@@ -503,10 +511,9 @@
 
 (defun previewing-build-path (first &optional next &rest rest)
   (if next
-      (apply 'previewing-path-build
+      (apply 'previewing-build-path
              (cons (concat (file-name-as-directory first) next) rest))
     first))
-
 
 (defun previewing-symbol-mode-p (sym)
   "Return non-nil if a symbol refers to a mode.
