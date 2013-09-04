@@ -9,6 +9,13 @@
 
 (eval-when-compile (require 'cl))
 
+(defvar previewing-mode-map
+  (let ((previewing-mode-map (make-sparse-keymap)))
+    (define-key previewing-mode-map (kbd "C-c C-g") 'previewing-do-preview)
+    (define-key previewing-mode-map (kbd "C-c C-h") 'previewing-stop-process)
+    previewing-mode-map)
+  "Keymap for previewing mode")
+
 ;;;###autoload
 (define-minor-mode previewing-mode
 
@@ -24,12 +31,22 @@
    launch an external viewer. To disable this change
    `previewing-when-save'.
 
+   The Previewing can be invoked and stopped manually by
+   `previewing-do-preview' (\\[previewing-do-preview]) and
+   `previewing-stop-process' (\\[previewing-stop-process]).
+
+   Normally, previewing happens in the background and the
+   compilation buffer is only shown on error. To always show it
+   set `previewing-always-show-buffer'.
+
    Variables `previewing-build-command' and
    `previewing-view-command' control which commands are run to
    build and view files. If not specified, matching entries are
    sought in `previewing-build-command-list' and
    `previewing-view-command-list'."
+
   :lighter " Prev"
+  :keymap previewing-mode-map
 
   (if previewing-mode
       (add-hook 'after-save-hook
@@ -38,6 +55,13 @@
                  'previewing-check-and-do-preview 'local)))
 
 ;;;; Mode variables.
+
+(defun previewing-start-or-stop ()
+  (interactive)
+  "Stops a previewing process if one is running. Otherwise starts one."
+  (if previewing-process
+      (previewing-stop-process)
+    (previewing-do-preview)))
 
 (defvar previewing-always-show-buffer nil
   "If non-nil, always shows previewing buffer when you start a job.")
