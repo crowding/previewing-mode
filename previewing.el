@@ -126,22 +126,31 @@
   "Start the preview if `previewing-when-save'."
   (when previewing-when-save (previewing-do-preview)))
 
+(defvar previewing-lockout nil
+  "Set non-nil if is currently trying to start a preview. This is so that
+   `save-some-buffers' doesn't start multiple previewing processes.")
+
 (defun previewing-do-preview ()
   "Start processing the current buffer for previewing. When
    `previewing-mode' is active this is called from
    `after-save-hook'."
   (interactive)
-  (save-some-buffers (list (current-buffer)))
-  (previewing-stop-process)
-  (previewing-reset-process-buffer)
-  (when previewing-always-show-buffer
-    (previewing-show-compilation-buffer))
-  (previewing-trace 1 "Previewing %S" (buffer-file-name))
-  ;;continue with build, then continue with view
-  (previewing-yield nil nil 'previewing-report-error)
-  (previewing-yield nil 'previewing-do-view)
-  (previewing-yield nil 'previewing-do-build)
-  (previewing-maybe-continue (buffer-file-name)))
+  (when (not previewing-lockout)
+    (setq previewing-lockout (current-buffer))
+    (unwind-protect
+        (progn
+          (save-some-buffers (list (current-buffer)))
+          (previewing-stop-process)
+          (previewing-reset-process-buffer)
+          (when previewing-always-show-buffer
+            (previewing-show-compilation-buffer))
+          (previewing-trace 1 "Previewing %S" (buffer-file-name))
+          ;;continue with build, then continue with view
+          (previewing-yield nil nil 'previewing-report-error)
+          (previewing-yield nil 'previewing-do-view)
+          (previewing-yield nil 'previewing-do-build)
+          (previewing-maybe-continue (buffer-file-name)))
+      (setq previewing-lockout nil))))
 
 (defun previewing-do-build (file data)
   (let ((build-command
