@@ -136,21 +136,19 @@
    `after-save-hook'."
   (interactive)
   (when (not previewing-lockout)
-    (setq previewing-lockout (current-buffer))
-    (unwind-protect
-        (progn
-          (save-some-buffers (list (current-buffer)))
-          (previewing-stop-process)
-          (previewing-reset-process-buffer)
-          (when previewing-always-show-buffer
-            (previewing-show-compilation-buffer))
-          (previewing-trace 1 "Previewing %S" (buffer-file-name))
-          ;;continue with build, then continue with view
-          (previewing-yield nil nil 'previewing-report-error)
-          (previewing-yield nil 'previewing-do-view)
-          (previewing-yield nil 'previewing-do-build)
-          (previewing-maybe-continue (buffer-file-name)))
-      (setq previewing-lockout nil))))
+    (let ((previewing-lockout (current-buffer)))
+      (progn
+        (save-some-buffers (list (current-buffer)))
+        (previewing-stop-process)
+        (previewing-reset-process-buffer)
+        (when previewing-always-show-buffer
+          (previewing-show-compilation-buffer))
+        (previewing-trace 1 "Previewing %S" (buffer-file-name))
+        ;;continue with build, then continue with view
+        (previewing-yield nil nil 'previewing-report-error)
+        (previewing-yield nil 'previewing-do-view)
+        (previewing-yield nil 'previewing-do-build)
+        (previewing-maybe-continue (buffer-file-name))))))
 
 (defun previewing-do-build (file data)
   (let ((build-command
