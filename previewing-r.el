@@ -3,23 +3,21 @@
 ;;; to enable this behavior add these lines to your .init.el:
 ;; (add-hook 'ess-mode-hook 'previewing-mode)
 ;; (add-hook 'ess-mode-hook 'previewing-r-setup)
-(autoload 'previewing-r-setup "previewing-r")
+;; (autoload 'previewing-r-setup "previewing-r")
 
 ;;;#autoload
 (defun previewing-r-setup ()
-  "Nothing (just a hook to hang autoloads on)" nil)
-
-(add-to-list 'compilation-error-regexp-alist-alist
-             '(r-testthat "^[0-9a-zA_Z]\\. \\(\\(Failure\\|Error\\): .*\\) ---"
-                          nil nil 2 1))
-
-(add-to-list 'compilation-error-regexp-alist 'r-testthat)
-
-(add-to-list 'previewing-build-command-list
+  "Install previewing handlers for R packages files"
+  (add-to-list 'previewing-build-command-list
              '(previewing-is-R-package-with-tests
                previewing-sequence
                (previewing-show-compilation-buffer)
                (previewing-run-R-unit-tests)))
+  (add-to-list 'compilation-error-regexp-alist-alist
+             '(r-testthat "^[0-9a-zA_Z]\\. \\(\\(Failure\\|Error\\): .*\\) ---"
+                          nil nil 2 1))
+  (add-to-list 'compilation-error-regexp-alist 'r-testthat)
+  (remove-hook 'ess-mode-hook 'previewing-r-setup))
 
 (defun previewing-is-R-package-with-tests (filename)
   (let (packagedir)

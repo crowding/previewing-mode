@@ -78,7 +78,7 @@
 
 (defvar previewing-build-command-list
 
-  `((,(lambda (file) poly-markdown+r-mode)
+  '(((lambda (file) poly-markdown+r-mode)
      ("\\(.*\\)\\.[Rr]md$"
       ("Rscript" "-e"
        "library(knitr); knit2html(commandArgs(trailingOnly=TRUE)[[1]])"
@@ -97,8 +97,8 @@
 
 (defvar previewing-view-command-list
 
-  `((".*.html$" previewing-browse-file)
-    (,(lambda () t) previewing-show-compilation-buffer))
+  '((".*.html$" previewing-browse-file)
+    ((lambda (file) t) previewing-show-compilation-buffer))
 
   "A list of candidate commands for viewing a file.
 
@@ -176,8 +176,9 @@
       (previewing-trace 2 "Found view command: %S" view-command)
       (previewing-maybe-continue
        (previewing-do-command file view-command)))
-     (t (previewing-trace 1 "No view command found")
-        (previewing-maybe-continue file)))))
+     (t
+      (previewing-trace 1 "No view command found")
+      (previewing-maybe-continue file)))))
 
 ;;;; Scanning command lists.
 
@@ -329,11 +330,12 @@
     (set-window-point win (point-max))))
 
 (defun previewing-show-compilation-buffer (&optional input data)
-  (cond
-   ((processp input)
-    (previewing-show-buffer-other-window
-     (or (process-buffer input) (previewing-get-process-buffer))))
-   (t (previewing-show-buffer-other-window (previewing-get-process-buffer))))
+  (when (not (equal input (buffer-file-name))) ;If nothing to show, show nothing
+    (cond
+     ((processp input)
+      (previewing-show-buffer-other-window
+       (or (process-buffer input) (previewing-get-process-buffer))))
+     (t (previewing-show-buffer-other-window (previewing-get-process-buffer)))))
   input)
 
 (defun previewing-show-buffer-other-window (buf)
