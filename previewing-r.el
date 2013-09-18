@@ -5,6 +5,19 @@
 ;; (add-hook 'ess-mode-hook 'previewing-r-setup)
 ;; (autoload 'previewing-r-setup "previewing-r")
 
+(defconst previewing-r-markdown-expression
+  "\\(.*\\)\\.[Rr]\\(?:md\\|mkd\\|markdown\\)$"
+  "Expression used to match R markdown files.")
+
+(defvar previewing-build-rmd-command
+  ;(setq previewing-build-rmd-command
+  `(previewing-do-substitute-command
+    ,previewing-r-markdown-expression
+    ("Rscript" "-e"
+     "library(knitr); knit2html(commandArgs(trailingOnly=TRUE)[[1]])"
+     "\\&") "\\1.html")
+  "Command used to build R-markdown files.")
+
 ;;;#autoload
 (defun previewing-r-setup ()
   "Install previewing handlers for R packages files"
@@ -13,6 +26,12 @@
                previewing-sequence
                (previewing-show-compilation-buffer)
                (previewing-run-R-unit-tests)))
+
+  ;; more indirect variable in how this list is interpreted?
+  (add-to-list 'previewing-build-command-list
+               `(,previewing-r-markdown-expression
+                 ,@previewing-build-rmd-command))
+
   (add-to-list 'compilation-error-regexp-alist-alist
              '(r-testthat "^[0-9a-zA_Z]\\. \\(\\(Failure\\|Error\\): .*\\) ---"
                           nil nil 2 1))

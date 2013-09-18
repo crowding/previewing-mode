@@ -77,16 +77,9 @@
    Level 4: Feedback on asynchronous scheduling")
 
 (defvar previewing-build-command-list
-
-  '(((lambda (file) poly-markdown+r-mode)
-     ("\\(.*\\)\\.[Rr]md$"
-      ("Rscript" "-e"
-       "library(knitr); knit2html(commandArgs(trailingOnly=TRUE)[[1]])"
-       "\\&") "\\1.html")
-     ("\\(.*\\).md$"
-      ("pandoc" "-f" "markdown" "\\&" "-t" "html" "-o" "\\1.html")))
-    (markdown-mode
-     "\\(.*\\).md$" ("pandoc" "-f" "markdown" "\\&"
+;(setq previewing-build-command-list
+  '((markdown-mode
+     "\\(.*\\)\\.[^.]+$" ("pandoc" "-f" "markdown" "\\&"
                      "-t" "html" "-o" "\\1.html")))
 
   "A list of candidate commands for building a file.
@@ -290,7 +283,7 @@
   (let ((string (buffer-file-name)))
     (save-match-data
       (or (string-match pattern file)
-          (signal 'error "No match for" pattern file))
+          (error "File name did not match %S (%S)" pattern file))
       (let* ((match (match-string 0 file)))
         (loop for part in parts collect
               (cond ((stringp part)
@@ -306,7 +299,7 @@
     (with-current-buffer buf
       (previewing-go-to-bottom)
       (let ((inhibit-read-only t))
-        (insert (previewing-format-command-line parts)))
+        (insert (previewing-format-command-line parts) "\n"))
       (apply 'start-process
              `(,(previewing-format-command-line parts)
                ,buf
@@ -428,7 +421,7 @@
   (previewing-trace 4 "Got process change %S %S" process change)
   (previewing-trace 4 "Current buffer is %S" (current-buffer))
   (unless (process-buffer process)
-    (signal 'error "Got notice on process with no buffer"))
+    (error "Got notice on process with no buffer"))
   (with-current-buffer (process-buffer process)
     (with-current-buffer previewing-home-buffer
       (cond
@@ -449,12 +442,19 @@
                             change (process-status process))
           (setq previewing-process nil)
           (previewing-error
-           (list 'error 'previewing-process-died process change)))))
+           (list 'previewing-process-died process change)))))
        (t
         (previewing-trace 4
          "Got signal for non-pending process? %S %S, was waiting for %S"
          process change previewing-process)
         nil)))))
+
+;process change
+
+(put 'previewing-process-died
+     'error-conditions
+     '(error previewing-process-died))
+(put 'previewing-process-died 'error-message "Previewing process died")
 
 (defun previewing-continue (retval)    ;handler called by sentinel
   "Pop off the continuation and go"
@@ -537,7 +537,9 @@
       (with-selected-window win
         (goto-char (point-min))
         (with-demoted-errors
-          (compilation-next-error 1))))) ; not sure why this is necessary
+          (compilation-next-error 1))
+        (scroll-down 0)
+        (redisplay))))                         ; not sure why this is necessary
   (signal (car e) (cdr e)))
 
 ;;;; Other supporting functions
@@ -552,8 +554,8 @@
   "Return non-nil if a symbol refers to a mode.
 
    A symbol 'SYM is considered to refer to a mode if it is bound to
-   a function, AND and ends in '-mode' OR the corresponding SYM-hook 
-    exists."
+   a function, AND and ends in '-mode' OR the corresponding SYM-hook
+   exists."
   (let*
       ((name (symbol-name sym))
        (ends-in-mode (save-match-data (string-match "-mode$" name)))
